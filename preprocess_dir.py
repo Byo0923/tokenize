@@ -402,6 +402,8 @@ def main():
     print("jsonl_files" , jsonl_files)
     for file_name in jsonl_files:
         file_path = os.path.join(args.input , file_name)
+        # ファイルサイズを取得し、ギガバイトに変換
+        file_size_gb = os.path.getsize(file_path) / (1024 ** 3)
         file_name_only, extension = os.path.splitext(file_name)
         sentence_split_file = file_name + "_ss" + extension
         output_prefix = args.output_prefix  + file_name_only
@@ -409,6 +411,7 @@ def main():
             'partition': file_path, 
             'sentence_split': sentence_split_file,
             'output_prefix': output_prefix,
+            'jsonl_file_size_gb': file_size_gb, 
             'args':args }
         in_ss_out_names.append(file_dict)
 
@@ -471,20 +474,20 @@ def main():
     # print("args.split_sentences" , args.split_sentences)
 
     # split sentences in partition files
-    if args.split_sentences and not split_sentences_present:
-        processes = []
-        for name in in_ss_out_names:
-            # print("name" , name)
-            p = multiprocessing.Process(target=partition.split_sentences,
-                                        args=((name['partition'], name['sentence_split']),))
-            p.start()
-            processes.append(p)
+    # if args.split_sentences and not split_sentences_present:
+    #     processes = []
+    #     for name in in_ss_out_names:
+    #         # print("name" , name)
+    #         p = multiprocessing.Process(target=partition.split_sentences,
+    #                                     args=((name['partition'], name['sentence_split']),))
+    #         p.start()
+    #         processes.append(p)
 
-        for p in processes:
-            p.join()
+    #     for p in processes:
+    #         p.join()
 
-        if args.partitions == 1:
-            return
+    #     if args.partitions == 1:
+    #         return
 
     # encode partition files in parallel
     processes = []
