@@ -93,6 +93,10 @@ class Encoder(object):
         ids = {}
         lens = {}
         for key in self.args.json_keys:
+            if key not in data:
+                print(f"Warning: Key '{key}' not found in data.")
+                text = ""
+                continue  # キーがない場合、このイテレーションをスキップ
             text = data[key]
             # print( "text" , text[0],":" , text[1],":" , text[-2],":" , text[-1] )
             if isinstance(text, list):
@@ -110,10 +114,10 @@ class Encoder(object):
                 doc_ids.append(Encoder.tokenizer.eod)
             ids[key] = doc_ids
             lens[key] = sentence_lens
-        return ids, lens, len(json_line)
+        return ids, lens, len(json_line), text
 
 
-class Partition(object):
+class Process(object):
     def __init__(self, args, workers):
         self.args = args
         self.workers = workers
@@ -126,6 +130,10 @@ class Partition(object):
             print(f"Processed {count} documents",
                   f"({count/elapsed} docs/s, {mbs} MB/s).",
                   file=sys.stderr)
+
+    def count_lines(self, file_path):
+        with open(file_path, 'r') as file:
+            return sum(1 for _ in file)
 
     def split_sentences(self, file_name):
         input_file_name, output_file_name = file_name
@@ -147,10 +155,16 @@ class Partition(object):
         fin.close()
         fout.close()
 
-
-    def process_json_file(self, file_name):
+    def process_json_file(self, file_name, queue):
         input_file_name, output_prefix = file_name
-        print("Opening", input_file_name)
+
+        # 総行数を取得
+        total_lines = count_lines(input_file_name)
+        # ファイルサイズを取得し、ギガバイトに変換
+        file_size_gb = os.path.getsize(input_file_name) / (1024 ** 3)
+
+        token_total_num = 0
+        char_total_num = 0
         fin = open(input_file_name, 'r', encoding='utf-8')
 
         startup_start = time.time()
@@ -179,16 +193,39 @@ class Partition(object):
         startup_end = time.time()
         proc_start = time.time()
         total_bytes_processed = 0
+
+        print("Start :", input_file_name)
         print("Time to startup:", startup_end - startup_start)
-        for i, (doc, sentence_lens, bytes_processed) in enumerate(encoded_docs, start=1):
+        for i, (doc, sentence_lens, bytes_processed, text) in enumerate(tqdm(encoded_docs, total=total_lines), start=1):
             total_bytes_processed += bytes_processed
             for key in doc.keys():
                 builders[key].add_doc(doc[key], sentence_lens[key])
-            self.print_processing_stats(i, proc_start, total_bytes_processed)
+            for key in self.args.json_keys:
+                if key not in doc:
+                    print(f"Warning: Key '{key}' not found in {input_file_name}.")
+                    continue  # キーがない場合、このイテレーションをスキップ
+                token = doc[key] #31番始まり、7番終わりのトークンのdict
+                # encoded_docs.extend(token)
+                token_num = len(token) #トークン数
+                char_num =  len(text) #文字数
+                token_total_num += token_num
+                char_total_num += char_num
+            # self.print_processing_stats(i, proc_start, total_bytes_processed)
 
         fin.close()
         builders[key].finalize(output_idx_files[key])
 
+        result_dict = {
+            'input_file_name': input_file_name, 
+            'output_bin_files': output_bin_files[key] , 
+            'token_total_[KT]': token_total_num/1000,
+            'char_total_[KC]': char_total_num/1000,
+            'file_size_gb': file_size_gb ,
+            'tokenizer_model':self.args.tokenizer_model }
+        # print("result_dict ", result_dict)
+
+        # 結果をキューに入れる
+        queue.put(result_dict)
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -268,74 +305,9 @@ def check_files_exist(in_ss_out_names, key, num_partitions):
             return False
     return True
 
-
 def count_lines(file_path):
     with open(file_path, 'r') as file:
         return sum(1 for _ in file)
-
-# 並列を行う関数
-def process_item(in_ss_out_names):
-    input_file_name = in_ss_out_names['partition']
-    output_prefix = in_ss_out_names['output_prefix']
-    args = in_ss_out_names['args']
-    print("Opening", input_file_name)
-
-    level = "document"
-    if in_ss_out_names['sentence_split']:
-        level = "sentence"
-
-    encoder = Encoder(args)
-    encoder.initializer()
-
-    tokenizer = build_tokenizer(args)
-    ids = {}
-
-    output_bin_files = {}
-    output_idx_files = {}
-    builders = {}
-
-    token_total_num = 0
-    char_total_num = 0
-
-    for key in args.json_keys:
-        output_bin_files[key] = "{}_{}_{}.bin".format(output_prefix,
-                                                        key, level)
-        output_idx_files[key] = "{}_{}_{}.idx".format(output_prefix,
-                                                        key, level)
-        builders[key] = indexed_dataset.make_builder(output_bin_files[key],
-                                                impl=args.dataset_impl,
-                                                vocab_size=tokenizer.vocab_size)
-
-    # 総行数を取得
-    total_lines = count_lines(input_file_name)
-
-    with open(input_file_name, 'r') as file:
-        # tqdmを使用して進捗状況を表示
-        for line in tqdm(file, total=total_lines, desc="Processing lines"):
-            ids, sentence_lens, len_json_line =  encoder.encode(line)
-            token = ids['text'] #31番始まり、7番終わりのトークンのdict
-            # encoded_docs.extend(token)
-            token_num = len(token) #トークン数
-            char_num = len_json_line #文字数
-
-            # print(" ids" , len(ids['text']) )
-            # print(" ids" , ids['text'][0],  ids['text'][1],  ids['text'][-2],  ids['text'][-1]  )
-            # print(" lens" , lens)
-            # print(" len_json_line" , len_json_line )
-            for key in ids.keys():
-                builders[key].add_doc(ids[key], sentence_lens[key])
-            token_total_num += token_num
-            char_total_num += char_num
-
-    builders[key].finalize(output_idx_files[key])
-    result_dict = {
-        'input_file_name': input_file_name, 
-        'output_bin_files': output_bin_files[key] , 
-        'token_total_num': token_total_num,
-        'char_total_num': char_total_num,
-        'file_size_gb': in_ss_out_names['file_size_gb'] ,
-        'args':args.tokenizer_model }
-    return result_dict
 
 def main():
     # 現在の日本時間を取得
@@ -369,14 +341,11 @@ def main():
         file_path = os.path.join(args.input , file_name)
         file_name_only, extension = os.path.splitext(file_name)
         sentence_split_file = file_name + "_ss" + extension
-        # ファイルサイズを取得し、ギガバイトに変換
-        file_size_gb = os.path.getsize(file_path) / (1024 ** 3)
         output_prefix = args.output_prefix  + file_name_only
         file_dict = {
             'partition': file_path, 
             'sentence_split': sentence_split_file,
             'output_prefix': output_prefix,
-            'jsonl_file_size_gb': file_size_gb,
             'args':args }
         in_ss_out_names.append(file_dict)
 
@@ -431,19 +400,18 @@ def main():
     #             partitioned_input_files[idx].close()
 
     assert args.workers % args.partitions == 0
-    partition = Partition(args, args.workers//args.partitions)
+    process = Process(args, args.workers )
 
     # check to see if paritions with split sentences already created
     split_sentences_present = check_files_exist(in_ss_out_names, 'sentence_split', args.partitions)
-    print("split_sentences_present" , split_sentences_present)
-    print("args.split_sentences" , args.split_sentences)
+    # print("split_sentences_present" , split_sentences_present)
+    # print("args.split_sentences" , args.split_sentences)
 
     # split sentences in partition files
     if args.split_sentences and not split_sentences_present:
         processes = []
         for name in in_ss_out_names:
-            print("name" , name)
-            p = multiprocessing.Process(target=partition.split_sentences,
+            p = multiprocessing.Process(target=process.split_sentences,
                                         args=((name['partition'], name['sentence_split']),))
             p.start()
             processes.append(p)
@@ -455,26 +423,29 @@ def main():
             return
 
     # encode partition files in parallel
-    # processes = []
+    processes = []
     input_key = 'sentence_split' if args.split_sentences else 'partition'
-    # for name in in_ss_out_names:
-    #     print("name" , name)
 
-    #     p = multiprocessing.Process(target=partition.process_json_file,
-    #                                 args=((name[input_key], name['output_prefix']),))
-    #     p.start()
-    #     processes.append(p)
+    # マルチプロセスのためのキューを作成
+    queue = multiprocessing.Queue()
+    for name in in_ss_out_names:
+        # print("name" , name)
+        p = multiprocessing.Process(target=process.process_json_file,
+                                    args=((name[input_key], name['output_prefix']), queue))
+        p.start()
+        processes.append(p)
+        # p.join()
+    # すべてのプロセスが終了するまで待機
+    for p in processes:
+        p.join(1)  # 1秒待ってみる
+        # if p.is_alive():
+        #     print(f"Process {p.name} has not finished yet.")
 
-    # for p in processes:
-    #     p.join()
+    # 結果をキューから取得してリストに格納
+    results = []
+    while not queue.empty():
+        results.append(queue.get())
 
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        results = list(executor.map(process_item, in_ss_out_names))
-    # for  in_ss_out_name in in_ss_out_names :
-    #     process_item( in_ss_out_name )
-    print("result_dict ," , results)
-
-    # pandas DataFrameに変換
     df = pd.DataFrame(results)
 
     # CSVに出力
@@ -485,9 +456,9 @@ def main():
     finish_japan = datetime.now(japan_timezone)    
     # 日時を秒単位までのフォーマットで表示
     formatted_time = finish_japan.strftime("%Y-%m-%d %H:%M:%S")
-    print("finish time: ", formatted_time)
+    print("Finish time: ", formatted_time)
     process_time = finish_japan - start_japan
-    print( " ---- fnish   process_time : " , process_time)
+    print( " ---- Fnish   process_time : " , process_time)
     # if args.partitions == 1:
     #     return
 
