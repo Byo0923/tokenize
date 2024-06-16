@@ -93,6 +93,10 @@ class Encoder(object):
         ids = {}
         lens = {}
         for key in self.args.json_keys:
+            if key not in data:
+                print(f"Warning: Key '{key}' not found in data.")
+                text = ""
+                continue  # キーがない場合、このイテレーションをスキップ
             text = data[key]
             # print( "text" , text[0],":" , text[1],":" , text[-2],":" , text[-1] )
             if isinstance(text, list):
@@ -110,7 +114,7 @@ class Encoder(object):
                 doc_ids.append(Encoder.tokenizer.eod)
             ids[key] = doc_ids
             lens[key] = sentence_lens
-        return ids, lens, len(json_line)
+        return ids, lens, len(json_line), text
 
 
 class Partition(object):
@@ -312,29 +316,28 @@ def process_item(in_ss_out_names):
     with open(input_file_name, 'r') as file:
         # tqdmを使用して進捗状況を表示
         for line in tqdm(file, total=total_lines, desc="Processing lines"):
-            ids, sentence_lens, len_json_line =  encoder.encode(line)
-            token = ids['text'] #31番始まり、7番終わりのトークンのdict
-            # encoded_docs.extend(token)
-            token_num = len(token) #トークン数
-            char_num = len_json_line #文字数
-
-            # print(" ids" , len(ids['text']) )
-            # print(" ids" , ids['text'][0],  ids['text'][1],  ids['text'][-2],  ids['text'][-1]  )
-            # print(" lens" , lens)
-            # print(" len_json_line" , len_json_line )
+            ids, sentence_lens, len_json_line, text =  encoder.encode(line)
+            for key in args.json_keys:
+                if key not in ids:
+                    print(f"Warning: Key '{key}' not found in {input_file_name}.")
+                    continue  # キーがない場合、このイテレーションをスキップ
+                token = ids['text'] #31番始まり、7番終わりのトークンのdict
+                # encoded_docs.extend(token)
+                token_num = len(token) #トークン数
+                char_num = len(text) #文字数
+                token_total_num += token_num
+                char_total_num += char_num
             for key in ids.keys():
                 builders[key].add_doc(ids[key], sentence_lens[key])
-            token_total_num += token_num
-            char_total_num += char_num
 
     builders[key].finalize(output_idx_files[key])
     result_dict = {
         'input_file_name': input_file_name, 
         'output_bin_files': output_bin_files[key] , 
-        'token_total_num': token_total_num,
-        'char_total_num': char_total_num,
-        'file_size_gb': in_ss_out_names['file_size_gb'] ,
-        'args':args.tokenizer_model }
+        'token_total_[KB]': token_total_num/1000,
+        'char_total_[KW]': char_total_num/1000,
+        'file_size_[GB]': in_ss_out_names['jsonl_file_size_gb'] ,
+        'tokenizer_model':args.tokenizer_model }
     return result_dict
 
 def main():
@@ -435,14 +438,14 @@ def main():
 
     # check to see if paritions with split sentences already created
     split_sentences_present = check_files_exist(in_ss_out_names, 'sentence_split', args.partitions)
-    print("split_sentences_present" , split_sentences_present)
-    print("args.split_sentences" , args.split_sentences)
+    # print("split_sentences_present" , split_sentences_present)
+    # print("args.split_sentences" , args.split_sentences)
 
     # split sentences in partition files
     if args.split_sentences and not split_sentences_present:
         processes = []
         for name in in_ss_out_names:
-            print("name" , name)
+            # print("name" , name)
             p = multiprocessing.Process(target=partition.split_sentences,
                                         args=((name['partition'], name['sentence_split']),))
             p.start()
@@ -472,7 +475,7 @@ def main():
         results = list(executor.map(process_item, in_ss_out_names))
     # for  in_ss_out_name in in_ss_out_names :
     #     process_item( in_ss_out_name )
-    print("result_dict ," , results)
+    # print("result_dict ," , results)
 
     # pandas DataFrameに変換
     df = pd.DataFrame(results)
@@ -485,9 +488,9 @@ def main():
     finish_japan = datetime.now(japan_timezone)    
     # 日時を秒単位までのフォーマットで表示
     formatted_time = finish_japan.strftime("%Y-%m-%d %H:%M:%S")
-    print("finish time: ", formatted_time)
+    print("Finish time: ", formatted_time)
     process_time = finish_japan - start_japan
-    print( " ---- fnish   process_time : " , process_time)
+    print( " ---- Fnish   process_time : " , process_time)
     # if args.partitions == 1:
     #     return
 
