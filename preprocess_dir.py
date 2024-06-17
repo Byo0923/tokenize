@@ -89,9 +89,15 @@ class Encoder(object):
         return json.dumps(output), len(json_line)
 
     def encode(self, json_line):
-        data = json.loads(json_line)
         ids = {}
         lens = {}
+        try:
+            data = json.loads(json_line)
+        except json.JSONDecodeError as e:
+            print(f"デコードエラー: {e} - JSONデータ: {s[:50]}...")
+            json_line = ""
+            text = ""
+            return ids, lens, len(json_line), text
         for key in self.args.json_keys:
             if key not in data:
                 print(f"Warning: Key '{key}' not found in data.")
