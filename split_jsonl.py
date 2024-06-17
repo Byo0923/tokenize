@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 from tqdm import tqdm
-
+import pytz
 
 from datetime import datetime
 # 日本のタイムゾーンを設定

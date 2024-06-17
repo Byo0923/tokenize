@@ -1,7 +1,7 @@
 #tokenize
-input: /home/knishizawa/Matsuo_AI/LLM/data_set/hanrei_jsonl
+input: /storage5/shared/corpus/0615llmjp_corpus_v2/batch_jsonl
 #tokenize
-input_tokenizer_file: /home/knishizawa/Matsuo_AI/LLM/ja53K_en13K_add_dummy/ja53K_en13K_add_dummy.model
-output_prefix: /home/knishizawa/Matsuo_AI/LLM/tokenized_data/
-workers: 26
+input_tokenizer_file: /storage5/tokenizer/ja53K_en13K_add_dummy.model
+output_prefix: /storage5/shared/corpus/2nd_tonyu/tokenized/llmjp/
+workers: 64
 megatron_deepspeed_dir: Megatron-DeepSpeed
