@@ -93,8 +93,8 @@ class Encoder(object):
         lens = {}
         try:
             data = json.loads(json_line)
-        except json.JSONDecodeError as e:
-            print(f"デコードエラー: {e} - JSONデータ: {s[:50]}...")
+        except json.decoder.JSONDecodeError as e:
+            print(f"デコードエラー: {e} ") 
             json_line = ""
             text = ""
             return ids, lens, len(json_line), text
