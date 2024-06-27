@@ -2,11 +2,8 @@
 #SBATCH --time=48:00:00
 #SBATCH --gpus-per-node=0
 
-
 source ~/miniconda3/etc/profile.d/conda.sh
-
 conda activate textprocess
-
 
 # tokenize
 output_prefix=$(yq -r '.output_prefix' ./config_dir.yaml)
@@ -20,7 +17,7 @@ python ./preprocess_dir.py \
     --input  ${input_jsonl} \
     --output-prefix ${output_prefix} \
     --dataset-impl mmap \
-    --workers 64 \
+    --workers 2 \
     --append-eod
 echo ""
 

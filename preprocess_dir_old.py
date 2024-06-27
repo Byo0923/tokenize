@@ -161,6 +161,78 @@ class Process(object):
         fin.close()
         fout.close()
 
+    def process_json_file(self, file_name, queue):
+        input_file_name, output_prefix = file_name
+
+        # 総行数を取得
+        total_lines = count_lines(input_file_name)
+        # ファイルサイズを取得し、ギガバイトに変換
+        file_size_gb = os.path.getsize(input_file_name) / (1024 ** 3)
+
+        token_total_num = 0
+        char_total_num = 0
+        fin = open(input_file_name, 'r', encoding='utf-8')
+
+        startup_start = time.time()
+        encoder = Encoder(self.args)
+        tokenizer = build_tokenizer(self.args)
+        pool = multiprocessing.Pool(self.workers, initializer=encoder.initializer)
+        encoded_docs = pool.imap(encoder.encode, fin, 32)
+
+        level = "document"
+        if self.args.split_sentences:
+            level = "sentence"
+
+        output_bin_files = {}
+        output_idx_files = {}
+        builders = {}
+
+        for key in self.args.json_keys:
+            output_bin_files[key] = "{}_{}_{}.bin".format(output_prefix,
+                                                          key, level)
+            output_idx_files[key] = "{}_{}_{}.idx".format(output_prefix,
+                                                          key, level)
+            builders[key] = indexed_dataset.make_builder(output_bin_files[key],
+                                                   impl=self.args.dataset_impl,
+                                                   vocab_size=tokenizer.vocab_size)
+
+        startup_end = time.time()
+        proc_start = time.time()
+        total_bytes_processed = 0
+
+        print("Start :", input_file_name)
+        print("Time to startup:", startup_end - startup_start)
+        for i, (doc, sentence_lens, bytes_processed, text) in enumerate(tqdm(encoded_docs, total=total_lines), start=1):
+            total_bytes_processed += bytes_processed
+            for key in doc.keys():
+                builders[key].add_doc(doc[key], sentence_lens[key])
+            for key in self.args.json_keys:
+                if key not in doc:
+                    print(f"Warning: Key '{key}' not found in {input_file_name}.")
+                    continue  # キーがない場合、このイテレーションをスキップ
+                token = doc[key] #31番始まり、7番終わりのトークンのdict
+                # encoded_docs.extend(token)
+                token_num = len(token) #トークン数
+                char_num =  len(text) #文字数
+                token_total_num += token_num
+                char_total_num += char_num
+            # self.print_processing_stats(i, proc_start, total_bytes_processed)
+
+        fin.close()
+        builders[key].finalize(output_idx_files[key])
+
+        result_dict = {
+            'input_file_name': input_file_name, 
+            'output_bin_files': output_bin_files[key] , 
+            'token_total_[KT]': token_total_num/1000,
+            'char_total_[KC]': char_total_num/1000,
+            'file_size_gb': file_size_gb ,
+            'tokenizer_model':self.args.tokenizer_model }
+        # print("result_dict ", result_dict)
+
+        # 結果をキューに入れる
+        queue.put(result_dict)
+
 def get_args():
     parser = argparse.ArgumentParser()
     group = parser.add_argument_group(title='input data')
@@ -233,9 +305,9 @@ def get_file_name(args, file_id):
     return file_names
 
 
-def check_files_exist(target_files_list, key, num_partitions):
+def check_files_exist(in_ss_out_names, key, num_partitions):
     for i in range(num_partitions):
-        if not os.path.exists(target_files_list[i][key]):
+        if not os.path.exists(in_ss_out_names[i][key]):
             return False
     return True
 
@@ -243,34 +315,15 @@ def count_lines(file_path):
     with open(file_path, 'r') as file:
         return sum(1 for _ in file)
 
-def delete_cache(directory):
-    # ディレクトリを下降順で走査
-    for root, dirs, files in os.walk(directory, topdown=False):
-        # ファイルの削除
-        for name in files:
-            file_path = os.path.join(root, name)
-            if not (name.endswith('.bin') or name.endswith('.idx')):
-                os.remove(file_path)
-                # print(f"Deleted file: {file_path}")
-
-        # 空のディレクトリの削除
-        for name in dirs:
-            dir_path = os.path.join(root, name)
-            try:
-                os.rmdir(dir_path)
-                # print(f"Deleted directory: {dir_path}")
-            except OSError as e:
-                print(f"Directory not empty: {dir_path}")
-
-
 # 並列を行う関数
-def process_item(target_files_list):
-    input_file_name = target_files_list['partition']
-    output_prefix = target_files_list['output_prefix']
-    args = target_files_list['args']
+def process_item(in_ss_out_names):
+    input_file_name = in_ss_out_names['partition']
+    output_prefix = in_ss_out_names['output_prefix']
+    args = in_ss_out_names['args']
+    print("Opening", input_file_name)
 
     level = "document"
-    if target_files_list['sentence_split']:
+    if in_ss_out_names['sentence_split']:
         level = "sentence"
 
     encoder = Encoder(args)
@@ -296,9 +349,7 @@ def process_item(target_files_list):
                                                 vocab_size=tokenizer.vocab_size)
 
     # 総行数を取得
-    print("Opening, counting lines ....", input_file_name)
     total_lines = count_lines(input_file_name)
-    print("Opened : ", input_file_name)
 
     with open(input_file_name, 'r') as file:
         # tqdmを使用して進捗状況を表示
@@ -317,29 +368,13 @@ def process_item(target_files_list):
             for key in ids.keys():
                 builders[key].add_doc(ids[key], sentence_lens[key])
 
-    time.sleep(60)
     builders[key].finalize(output_idx_files[key])
-    time.sleep(60)
-    delete_cache( output_prefix )
-    bin_file_size_b = os.path.getsize(output_bin_files[key]) 
-    bin_file_size_gb = bin_file_size_b / (1024 ** 3)
-    idx_file_size_mb = os.path.getsize(output_idx_files[key]) / (1024 ** 2)
-    file_size_ratio = bin_file_size_b / token_total_num 
-    if file_size_ratio == 2:
-        file_size_ratio_OK = True
-    else:
-        file_size_ratio_OK = False
-
     result_dict = {
         'input_file_name': input_file_name, 
         'output_bin_files': output_bin_files[key] , 
-        'token_total_[BT]': token_total_num/10^9,
-        'char_total_[BW]': char_total_num/10^9,
-        'jsonl_file_size_[GB]': target_files_list['jsonl_file_size_gb'] ,
-        'bin_file_size_[GB]': bin_file_size_gb ,
-        'bin_file_size_ratio': file_size_ratio ,
-        'file_size_ratio_OK': file_size_ratio_OK ,
-        'idx_file_size[MB]': idx_file_size_mb ,
+        'token_total_[KB]': token_total_num/1000,
+        'char_total_[KW]': char_total_num/1000,
+        'file_size_[GB]': in_ss_out_names['jsonl_file_size_gb'] ,
         'tokenizer_model':args.tokenizer_model }
     return result_dict
 
@@ -390,22 +425,89 @@ def main():
             'args':args }
         target_files_list.append(file_dict)
 
+    # #処理するファイルリスト
+    # in_ss_out_names = []
+    # if args.partitions == 1:
+    #     file_name, extension = os.path.splitext(args.input)
+    #     print("file_name ", file_name)
+    #     sentence_split_file = file_name + "_ss" + extension
+    #     file_names = {
+    #         'partition': args.input,
+    #         'sentence_split': sentence_split_file,
+    #         'output_prefix': args.output_prefix}
+    #     in_ss_out_names.append(file_names)
+    # else:
+    #     in_file_names = glob.glob(args.input)
+
+    #     # create .jsonl parition files
+    #     for idx in range(args.partitions):
+    #         in_ss_out_name = get_file_name(args, idx)
+    #         in_ss_out_names.append(in_ss_out_name)
+
+    #     # check to see if paritions were already created
+    #     partitions_present = check_files_exist(in_ss_out_names, 'partition', args.partitions)
+
+    #     # check to see if paritions with split sentences already created
+    #     split_sentences_present = check_files_exist(in_ss_out_names, 'sentence_split', args.partitions)
+
+    #     if not partitions_present and not split_sentences_present:
+    #         # populate .jsonl partition files from parent files
+    #         partitioned_input_files = []
+    #         for idx in range(args.partitions):
+    #             partitioned_input_file = open(in_ss_out_names[idx]['partition'], 'w')
+    #             partitioned_input_files.append(partitioned_input_file)
+
+    #         index = 0
+    #         for in_file_name in in_file_names:
+    #             # support for gzip files
+    #             if in_file_name.endswith(".gz"):
+    #                 fin = gzip.open(in_file_name, 'rt')
+    #             else:
+    #                 fin = open(in_file_name, 'r', encoding='utf-8')
+
+    #             for line in fin:
+    #                 print("line ", line)
+    #                 partitioned_input_files[index].write(line)
+    #                 index = (index + 1)%args.partitions
+
+    #             fin.close()
+
+    #         for idx in range(args.partitions):
+    #             partitioned_input_files[idx].close()
+
     assert args.workers % args.partitions == 0
     process = Process(args, args.workers )
 
     # check to see if paritions with split sentences already created
     split_sentences_present = check_files_exist(target_files_list, 'sentence_split', args.partitions)
+    # print("split_sentences_present" , split_sentences_present)
+    # print("args.split_sentences" , args.split_sentences)
+
+    # split sentences in partition files
+    # if args.split_sentences and not split_sentences_present:
+    #     processes = []
+    #     for name in in_ss_out_names:
+    #         # print("name" , name)
+    #         p = multiprocessing.Process(target=partition.split_sentences,
+    #                                     args=((name['partition'], name['sentence_split']),))
+    #         p.start()
+    #         processes.append(p)
+
+    #     for p in processes:
+    #         p.join()
+
+    #     if args.partitions == 1:
+    #         return
+
+    # encode partition files in parallel
     processes = []
     input_key = 'sentence_split' if args.split_sentences else 'partition'
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         results = list(executor.map(process_item, target_files_list))
-
-    print( "ProcessPoolExecutor Done. Plese wait ...")
-    time.sleep(10)
-    print( "Plese wait ...")
-    time.sleep(10)
-    print( "Make result ...")
+    # for  in_ss_out_name in in_ss_out_names :
+    #     process_item( in_ss_out_name )
+    # print("result_dict ," , results)
 
     df = pd.DataFrame(results)
 
@@ -420,6 +522,33 @@ def main():
     print("Finish time: ", formatted_time)
     process_time = finish_japan - start_japan
     print( " ---- Fnish   process_time : " , process_time)
+    # if args.partitions == 1:
+    #     return
+
+    # # merge bin/idx partitions
+    # level = "document"
+    # if args.split_sentences:
+    #     level = "sentence"
+
+    # output_bin_files = {}
+    # output_idx_files = {}
+    # builders = {}
+    # tokenizer = build_tokenizer(args)
+
+    # for key in args.json_keys:
+    #     output_bin_files[key] = "{}_{}_{}.bin".format(args.output_prefix,
+    #                                                   key, level)
+    #     output_idx_files[key] = "{}_{}_{}.idx".format(args.output_prefix,
+    #                                                   key, level)
+    #     builders[key] = indexed_dataset.make_builder(output_bin_files[key],
+    #                                                  impl=args.dataset_impl,
+    #                                                  vocab_size=tokenizer.vocab_size)
+    #     for name in in_ss_out_names:
+    #         parition_output_prefix = name['output_prefix']
+    #         full_partition_output_prefix = "{}_{}_{}".format(parition_output_prefix,
+    #                                                          key, level)
+    #         builders[key].merge_file_(full_partition_output_prefix)
+    #     builders[key].finalize(output_idx_files[key])
 
 
 if __name__ == '__main__':

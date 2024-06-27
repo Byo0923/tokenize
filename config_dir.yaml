@@ -1,7 +1,7 @@
 #tokenize
-input: /storage5/shared/k_nishizawa/tmp_p1_token/jsonl
+input: /storage5/shared/corpus/pmc/PMC/merged_jsonl
 #tokenize
-input_tokenizer_file: /storage5/tokenizer/ja53K_en13K_add_dummy.model
-output_prefix: /storage5/shared/k_nishizawa/tmp_p1_token/tokenized/
-workers: 64
+input_tokenizer_file: /storage5/shared/corpus/phase1_tokenizer_data/tokernizer/tokenizer_scale200.model
+output_prefix: /storage5/shared/corpus/re_tokenize_tokenizer_scale200/pmc/
+workers: 4
 megatron_deepspeed_dir: Megatron-DeepSpeed
