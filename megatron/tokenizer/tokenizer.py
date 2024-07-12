@@ -411,6 +411,35 @@ class _SentencePieceTokenizer(AbstractTokenizer):
         return ids
 
     # From:
+    # https://github.com/NVIDIA/NeMo/blob/c8fa217e811d60d11d014827c7f3845ff6c99ae7/nemo/collections/common/tokenizers/sentencepiece_tokenizer.py#L89
+    def tokenize_and_count(self, text):
+        ids = []
+        decode_text = []
+        idx = 0
+
+        while 1:
+            indices = {}
+            for token in self._special_tokens:
+                try:
+                    indices[token] = text[idx:].index(token)
+                except ValueError:
+                    continue
+            if len(indices) == 0:
+                break
+            next_token = min(indices, key=indices.get)
+            next_idx = idx + indices[next_token]
+
+            ids.extend(self.tokenizer.encode_as_ids(text[idx:next_idx]))
+            ids.append(self._special_tokens[next_token])
+            idx = next_idx + len(next_token)
+
+        ids.extend(self.tokenizer.encode_as_ids(text[idx:]))
+        for ids_one in ids:
+            decode_text.extend(self.tokenizer.decode_ids(ids_one))
+
+        return ids, decode_text
+
+    # From:
     # https://github.com/NVIDIA/NeMo/blob/c8fa217e811d60d11d014827c7f3845ff6c99ae7/nemo/collections/common/tokenizers/sentencepiece_tokenizer.py#L125
     def detokenize(self, ids):
         text = ""

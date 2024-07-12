@@ -1,0 +1,11 @@
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/0708llmjp_corpus_v3
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/0709llmjp_corpus_v4
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/pmc
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/0619synth_gcp_needed_clean
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/SyntheticTextCC_0701gcp
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/sansu
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/synthtext
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/0619synth_hf_needed_clean
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/openmath
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/synth_cc_hf
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/hatakeyama_synth0712/wiki         

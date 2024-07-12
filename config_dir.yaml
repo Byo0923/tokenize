@@ -1,7 +1,17 @@
 #tokenize
-input: /storage5/shared/corpus/pmc/PMC/merged_jsonl
+input:
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/0615llmjp_corpus_v2
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/mixtral_rag_synthetic_hatakeyama_tsubame_0712
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/synth_text_gcp_ca0712_hatakeyama
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/ParliamentaryProceedings
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/japan_law
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/ja_CoTangent
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/ja_AutoWikiQA
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/data-haijima
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/ft_instruction_synthesizer_collection
+  - /storage5/shared/p2_corpus/before_tokenize_jsonl/judicial_precedent  
+
 #tokenize
 input_tokenizer_file: /storage5/shared/corpus/phase1_tokenizer_data/tokernizer/tokenizer_scale200.model
-output_prefix: /storage5/shared/corpus/re_tokenize_tokenizer_scale200/pmc/
-workers: 4
+output_prefix: /storage5/shared/p2_corpus/tokenized_data/20240713_a/
 megatron_deepspeed_dir: Megatron-DeepSpeed

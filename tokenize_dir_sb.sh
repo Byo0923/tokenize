@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --time=48:00:00
-#SBATCH --gpus-per-node=0
+# SBATCH --time=48:00:00
+# SBATCH --gpus-per-node=0
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate textprocess
@@ -17,7 +17,7 @@ python ./preprocess_dir.py \
     --input  ${input_jsonl} \
     --output-prefix ${output_prefix} \
     --dataset-impl mmap \
-    --workers 2 \
+    --max_workers 30 \
     --append-eod
 echo ""
 

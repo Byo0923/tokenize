@@ -61,22 +61,7 @@ class Encoder(object):
     def initializer(self):
         # Use Encoder class as a container for global data
         Encoder.tokenizer = build_tokenizer(self.args)
-        if self.args.split_sentences:
-            if not nltk_available:
-                print("NLTK is not available to split sentences.")
-                exit()
-            library = "tokenizers/punkt/{}.pickle".format(self.args.lang)
-            splitter = nltk.load(library)
-            if self.args.keep_newlines:
-                # this prevents punkt from eating newlines after sentences
-                Encoder.splitter = nltk.tokenize.punkt.PunktSentenceTokenizer(
-                    train_text = splitter._params,
-                    lang_vars = CustomLanguageVars())
-            else:
-                Encoder.splitter = splitter
-
-        else:
-            Encoder.splitter = IdentitySplitter()
+        Encoder.splitter = IdentitySplitter()
 
     def split(self, json_line):
         data = json.loads(json_line)
@@ -164,12 +149,10 @@ class Process(object):
 def get_args():
     parser = argparse.ArgumentParser()
     group = parser.add_argument_group(title='input data')
-    group.add_argument('--input', type=str, required=True,
+    group.add_argument('--input', type=str, nargs='+', required=True,
                        help='Path to input JSON')
     group.add_argument('--json-keys', nargs='+', default=['text'],
                        help='space separate listed of keys to extract from json')
-    group.add_argument('--split-sentences', action='store_true',
-                       help='Split documents into sentences.')
     group.add_argument('--keep-newlines', action='store_true',
                        help='Keep newlines between sentences when splitting.')
 
@@ -181,12 +164,6 @@ def get_args():
                        help='What type of tokenizer to use.')
     group.add_argument('--tokenizer-model', type=str, default=None,
                        help='YTTM tokenizer model.')
-    group.add_argument('--vocab-file', type=str, default=None,
-                       help='Path to the vocab file')
-    group.add_argument('--vocab-size', default=786,
-                       help='size of vocab for use with NullTokenizer')
-    group.add_argument('--merge-file', type=str, default=None,
-                       help='Path to the BPE merge file (if necessary).')
     group.add_argument('--append-eod', action='store_true',
                        help='Append an <eod> token to the end of a document.')
     group.add_argument('--lang', type=str, default='english',
@@ -198,19 +175,13 @@ def get_args():
                        choices=['lazy', 'cached', 'mmap'])
 
     group = parser.add_argument_group(title='runtime')
-    group.add_argument('--workers', type=int, required=True,
+    group.add_argument('--max_workers', type=int, required=True,
                        help=('Number of worker processes to launch.'
                              'A good default for fast pre-processing '
-                             'is: (workers * partitions) = available CPU cores.'))
-    group.add_argument('--partitions', type=int, default=1,
-                        help='Number of file partitions')
-    group.add_argument('--log-interval', type=int, default=1000,
-                       help='Interval between progress updates')
+                             'is: (max_workers * partitions) = available CPU cores.'))
+
     args = parser.parse_args()
     args.keep_empty = False
-
-    if args.tokenizer_type.lower().startswith('bert') and not args.split_sentences:
-        print("Are you sure you don't want to split sentences?")
 
     # some default/dummy values for the tokenizer
     args.rank = 1
@@ -219,7 +190,6 @@ def get_args():
     args.vocab_extra_ids = 0
 
     return args
-
 
 def get_file_name(args, file_id):
     file_name, extension = os.path.splitext(args.input)
@@ -232,9 +202,10 @@ def get_file_name(args, file_id):
         'output_prefix': output_prefix}
     return file_names
 
-
 def check_files_exist(target_files_list, key, num_partitions):
+    print("L237 num_partitions" , num_partitions)
     for i in range(num_partitions):
+        print( target_files_list[i][key]) 
         if not os.path.exists(target_files_list[i][key]):
             return False
     return True
@@ -333,14 +304,20 @@ def process_item(target_files_list):
     result_dict = {
         'input_file_name': input_file_name, 
         'output_bin_files': output_bin_files[key] , 
-        'token_total_[BT]': token_total_num/10^9,
-        'char_total_[BW]': char_total_num/10^9,
+        'token_total_[BT]': token_total_num/10**9,
+        'char_total_[BW]': char_total_num/10**9,
         'jsonl_file_size_[GB]': target_files_list['jsonl_file_size_gb'] ,
         'bin_file_size_[GB]': bin_file_size_gb ,
         'bin_file_size_ratio': file_size_ratio ,
         'file_size_ratio_OK': file_size_ratio_OK ,
         'idx_file_size[MB]': idx_file_size_mb ,
         'tokenizer_model':args.tokenizer_model }
+
+    df = pd.DataFrame(list(result_dict))
+    # CSVに出力
+    csv_path = "{}_result.csv".format(output_prefix)
+    df.to_csv(csv_path, index=False)
+
     return result_dict
 
 def main():
@@ -351,64 +328,91 @@ def main():
     print("Start time: ", formatted_time)
 
     args = get_args()
-
-    if args.split_sentences:
-        if nltk_available:
-            nltk.download("punkt", quiet=True)
-        else:
-            raise Exception(
-                "nltk library required for sentence splitting is not available.")
-
+        
     extension = ".jsonl"
 
     #処理するファイルリスト
-    target_files_list = []
+    target_dir_list = (args.input )
+    # JSONライブラリを使用して文字列をリストに変換
+    target_dir_list = target_dir_list[1:-1]
 
-    # 現在のディレクトリ内のファイルをリストアップ
-    files_in_directory = os.listdir(args.input )
-    # .jsonlファイルだけをフィルタリング
-    jsonl_files = [file for file in files_in_directory if file.endswith(extension)]
+    # リスト内の各ディレクトリに対して操作を行う
+    list_dir_path = []
+    for dir in target_dir_list:
+        # 余分なクォートとカンマを削除
+        list_dir_path.append(dir.strip('",'))
+    print("L356 list_dir_path" , list_dir_path)
+    #処理するファイルリスト
+    list_files_in_dir = []
+    target_files_list = []
+    list_jsonl_files_path_in_dir = []
+    list_jsonl_files_name_in_dir = []
+    list_dir_name = []
+    for dir in list_dir_path:
+        # 現在のディレクトリ内のファイルをリストアップ
+        list_files_in_dir = os.listdir(dir)
+        list_jsonl_files_path_in_dir.append( list_files_in_dir )
+        list_jsonl_files_name_in_dir.append( [file for file in list_files_in_dir if file.endswith(extension)] )
+        list_dir_name.append( os.path.basename(dir) )
 
     # ファイルリストを表示
-    print("jsonl_files" , jsonl_files)
-    for file_name in jsonl_files:
-        file_path = os.path.join(args.input , file_name)
-        # ファイルサイズを取得し、ギガバイトに変換
-        file_size_gb = os.path.getsize(file_path) / (1024 ** 3)
-        file_name_only, extension = os.path.splitext(file_name)
-        sentence_split_file = file_name + "_ss" + extension
-        output_prefix = args.output_prefix  + file_name_only
-        if not os.path.exists(output_prefix):
-            os.makedirs(output_prefix)
-            print(f"Created directory: {output_prefix}")
+    print("list_files_in_dir" , list_files_in_dir)
+    print("list_jsonl_files_path_in_dir" , list_jsonl_files_path_in_dir)
+    print("list_jsonl_files_path_in_dir" , list_jsonl_files_name_in_dir)
+    print("list_dir_name" , list_dir_name)
 
-        file_dict = {
-            'partition': file_path, 
-            'sentence_split': sentence_split_file,
-            'output_prefix': output_prefix,
-            'jsonl_file_size_GB': file_size_gb, 
-            'args':args }
-        target_files_list.append(file_dict)
+    for index, dir_path in enumerate(list_dir_path):
+        dir_name = list_dir_name[index]
+        for file_name in list_jsonl_files_name_in_dir[index]:
+            file_path = os.path.join(dir_path , file_name)
+            # ファイルサイズを取得し、ギガバイトに変換
+            file_size_gb = os.path.getsize(file_path) / (1024 ** 3)
+            file_name_only, extension = os.path.splitext(file_name)
+            sentence_split_file = file_name + "_ss" + extension
+            output_dir = os.path.join(args.output_prefix, dir_name) 
+            output_prefix = os.path.join(output_dir, file_name_only)
 
-    assert args.workers % args.partitions == 0
-    process = Process(args, args.workers )
+            # フォルダが存在しないことを確認し、存在する場合はエラーを発生
+            assert not os.path.exists(output_prefix), f"Please delete the folder at {output_prefix} and rerun the program."
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                print(f"Created directory: {output_dir}")
 
-    # check to see if paritions with split sentences already created
-    split_sentences_present = check_files_exist(target_files_list, 'sentence_split', args.partitions)
-    processes = []
-    input_key = 'sentence_split' if args.split_sentences else 'partition'
+            file_dict = {
+                'partition': file_path, 
+                'sentence_split': sentence_split_file,
+                'output_prefix': output_prefix,
+                'jsonl_file_size_gb': file_size_gb, 
+                'args':args }
+            target_files_list.append(file_dict)
 
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        results = list(executor.map(process_item, target_files_list))
+    # ProcessPoolExecutor を使用し、最大ワーカー数を30に設定
+    with concurrent.futures.ProcessPoolExecutor(max_workers=30) as executor:
+        # map を使用してリスト内の各ファイルに対して process_item 関数を並行実行
+        list_results = list(executor.map(process_item, target_files_list))
 
-    print( "ProcessPoolExecutor Done. Plese wait ...")
+    print( "ProcessPoolExecutor Done. Please wait ...")
     time.sleep(10)
-    print( "Plese wait ...")
+    print( "Please wait ...")
     time.sleep(10)
     print( "Make result ...")
 
-    df = pd.DataFrame(results)
+    list_data_path = []
+    for result in list_results:
+        output_bin_path = result["output_bin_files"]
+        data_path, extension = os.path.splitext(output_bin_path)
+        list_data_path.append( str( '"' + data_path + '"') )
 
+    # 現在の日時を取得し、ファイル名に使用する形式にフォーマットする
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # ファイル名に現在の日時を追加
+    filename = f"DATA_PATH_LIST_{current_time}.txt"
+    # ファイルに書き出す
+    with open( filename, 'w') as file:
+        for path in list_data_path:
+            file.write(path + '\n')  # 各パスを改行文字とともに書き出す                      
+
+    df = pd.DataFrame(list_results)
     # CSVに出力
     csv_path =  args.output_prefix  + "result.csv"
     df.to_csv(csv_path, index=False)

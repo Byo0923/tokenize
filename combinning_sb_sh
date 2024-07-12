@@ -1,0 +1,23 @@
+#!/bin/bash
+#SBATCH --job-name=KN_combine-jsonl
+#SBATCH --time=48:00:00
+#SBATCH --gpus-per-node=0
+
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate textprocess
+
+# 入力ファイルと出力ディレクトリのパス
+input_directory="/storage5/shared/p2_corpus/before_tokenize_jsonl/0615llmjp_corpus_v2"
+output_directory="/storage5/shared/p2_corpus/before_tokenize_jsonl/0615llmjp_corpus_v2/batch"
+data_name="llmjp_v2"
+max_file_size_gb=10
+
+# Pythonスクリプトの実行
+python ./combinning.py \
+    --input_dir $input_directory \
+    --output_dir $output_directory \
+    --dataset_name  $data_name \
+    --max_size_gb $max_file_size_gb \
+
+# Conda 環境をデアクティベート
+conda deactivate
